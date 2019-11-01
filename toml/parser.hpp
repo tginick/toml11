@@ -246,8 +246,9 @@ parse_floating(location<Container>& loc)
 }
 
 template<typename Container, typename Container2>
-std::string read_utf8_codepoint(const region<Container>& reg,
-              /* for err msg */ const location<Container2>& loc)
+result<std::string, std::string>
+read_utf8_codepoint(const region<Container>& reg,
+                    const location<Container2>& loc)
 {
     const auto str = reg.str().substr(1);
     std::uint_least32_t codepoint;
@@ -274,11 +275,11 @@ std::string read_utf8_codepoint(const region<Container>& reg,
     {
         if(0xD800 <= codepoint && codepoint <= 0xDFFF)
         {
-            throw syntax_error(format_underline("[error] "
+            return err(format_underline("[error] "
                 "toml::read_utf8_codepoint: codepoints in the range "
                 "[0xD800, 0xDFFF] are not valid UTF-8.", {{
                     std::addressof(loc), "not a valid UTF-8 codepoint"
-                }}), source_location(std::addressof(loc)));
+                }}));
         }
         assert(codepoint < 0xD800 || 0xDFFF < codepoint);
         // 1110yyyy 10yxxxxx 10xxxxxx
@@ -296,12 +297,11 @@ std::string read_utf8_codepoint(const region<Container>& reg,
     }
     else // out of UTF-8 region
     {
-        throw syntax_error(format_underline("[error] toml::read_utf8_codepoint:"
+        return err(format_underline("[error] toml::read_utf8_codepoint:"
             " input codepoint is too large.",
-            {{std::addressof(loc), "should be in [0x00..0x10FFFF]"}}),
-            source_location(std::addressof(loc)));
+            {{std::addressof(loc), "should be in [0x00..0x10FFFF]"}}));
     }
-    return character;
+    return ok(character);
 }
 
 template<typename Container>
@@ -310,8 +310,9 @@ result<std::string, std::string> parse_escape_sequence(location<Container>& loc)
     const auto first = loc.iter();
     if(first == loc.end() || *first != '\\')
     {
-        return err(format_underline("[error]: toml::parse_escape_sequence: ", {{
-            std::addressof(loc), "the next token is not a backslash \"\\\""}}));
+        throw internal_error(format_underline("[error]: "
+            "toml::parse_escape_sequence: ", {{std::addressof(loc),
+            "the next token is not a backslash \"\\\""}}));
     }
     loc.advance();
     switch(*loc.iter())
@@ -327,7 +328,7 @@ result<std::string, std::string> parse_escape_sequence(location<Container>& loc)
         {
             if(const auto token = lex_escape_unicode_short::invoke(loc))
             {
-                return ok(read_utf8_codepoint(token.unwrap(), loc));
+                return read_utf8_codepoint(token.unwrap(), loc);
             }
             else
             {
@@ -340,7 +341,7 @@ result<std::string, std::string> parse_escape_sequence(location<Container>& loc)
         {
             if(const auto token = lex_escape_unicode_long::invoke(loc))
             {
-                return ok(read_utf8_codepoint(token.unwrap(), loc));
+                return read_utf8_codepoint(token.unwrap(), loc);
             }
             else
             {
@@ -392,13 +393,22 @@ parse_ml_basic_string(location<Container>& loc)
             {
                 retval += unescaped.unwrap().str();
             }
-            if(auto escaped = parse_escape_sequence(inner_loc))
-            {
-                retval += escaped.unwrap();
-            }
             if(auto esc_nl = lex_ml_basic_escaped_newline::invoke(inner_loc))
             {
                 // ignore newline after escape until next non-ws char
+                // this should be called before parse_escape_sequence() because
+                // backslash+newline is not a valid escape sequence.
+            }
+            if(inner_loc.iter() != inner_loc.end() && *inner_loc.iter() == '\\')
+            {
+                if(auto escaped = parse_escape_sequence(inner_loc))
+                {
+                    retval += escaped.unwrap();
+                }
+                else
+                {
+                    return err(escaped.unwrap_err());
+                }
             }
             if(inner_loc.iter() == inner_loc.end())
             {
@@ -447,9 +457,16 @@ parse_basic_string(location<Container>& loc)
             {
                 retval += unescaped.unwrap().str();
             }
-            if(auto escaped = parse_escape_sequence(inner_loc))
+            if(inner_loc.iter() != inner_loc.end() && *inner_loc.iter() == '\\')
             {
-                retval += escaped.unwrap();
+                if(auto escaped = parse_escape_sequence(inner_loc))
+                {
+                    retval += escaped.unwrap();
+                }
+                else
+                {
+                    return err(escaped.unwrap_err());
+                }
             }
             if(inner_loc.iter() == inner_loc.end())
             {
