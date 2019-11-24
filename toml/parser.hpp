@@ -1974,6 +1974,54 @@ template<typename                     Comment = ::toml::discard_comments,
          template<typename ...> class Table   = std::unordered_map,
          template<typename ...> class Array   = std::vector>
 basic_value<Comment, Table, Array>
+parse(std::string_view sv, const std::string& fname = "unknown file") {
+    using value_type = basic_value<Comment, Table, Array>;
+
+    const auto fsize = sv.length();
+
+    // read whole file as a sequence of char
+    assert(fsize >= 0);
+    std::vector<char> letters(static_cast<std::size_t>(fsize));
+    for (uint32_t i = 0; i < fsize; i++) {
+        letters.push_back(sv[i]);
+    }
+
+    if(!letters.empty() && letters.back() == '\0')
+    {
+        letters.pop_back();
+    }
+
+    detail::location<std::vector<char>>
+        loc(std::move(fname), std::move(letters));
+
+    // skip BOM if exists.
+    // XXX component of BOM (like 0xEF) exceeds the representable range of
+    // signed char, so on some (actually, most) of the environment, these cannot
+    // be compared to char. However, since we are always out of luck, we need to
+    // check our chars are equivalent to BOM. To do this, first we need to
+    // convert char to unsigned char to guarantee the comparability.
+    if(loc.source()->size() >= 3)
+    {
+        std::array<unsigned char, 3> BOM;
+        std::memcpy(BOM.data(), loc.source()->data(), 3);
+        if(BOM[0] == 0xEF && BOM[1] == 0xBB && BOM[2] == 0xBF)
+        {
+            loc.advance(3); // BOM found. skip.
+        }
+    }
+
+    const auto data = detail::parse_toml_file<value_type>(loc);
+    if(!data)
+    {
+        throw syntax_error(data.unwrap_err(), source_location(std::addressof(loc)));
+    }
+    return data.unwrap();
+}
+
+template<typename                     Comment = ::toml::discard_comments,
+         template<typename ...> class Table   = std::unordered_map,
+         template<typename ...> class Array   = std::vector>
+basic_value<Comment, Table, Array>
 parse(std::istream& is, const std::string& fname = "unknown file")
 {
     using value_type = basic_value<Comment, Table, Array>;
