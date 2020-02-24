@@ -70,6 +70,7 @@ int main()
 - [Formatting user-defined error messages](#formatting-user-defined-error-messages)
 - [Obtaining location information](#obtaining-location-information)
 - [Exceptions](#exceptions)
+- [Colorize Error Messages](#colorize-error-messages)
 - [Serializing TOML data](#serializing-toml-data)
 - [Underlying types](#underlying-types)
 - [Unreleased TOML features](#unreleased-toml-features)
@@ -273,10 +274,44 @@ const auto color = toml::find<std::string>(data, "fruit", "physical", "color");
 const auto shape = toml::find<std::string>(data, "fruit", "physical", "shape");
 ```
 
+### Finding a value in an array
+
+You can find n-th value in an array by `toml::find`.
+
+```toml
+values = ["foo", "bar", "baz"]
+```
+
+``` cpp
+const auto data   = toml::parse("sample.toml");
+const auto values = toml::find(data, "values");
+const auto bar    = toml::find<std::string>(values, 1);
+```
+
+`toml::find` can also search array recursively.
+
+```cpp
+const auto data = toml::parse("fruit.toml");
+const auto bar  = toml::find<std::string>(data, "values", 1);
+```
+
+Before calling `toml::find`, you can check if a value corresponding to a key
+exists. You can use both `bool toml::value::contains(const key&) const` and
+`std::size_t toml::value::count(const key&) const`. Those behaves like the
+`std::map::contains` and `std::map::count`.
+
+```cpp
+const auto data = toml::parse("fruit.toml");
+if(data.contains("fruit") && data.at("fruit").count("physical") != 0)
+{
+    // ...
+}
+```
+
 ### In case of error
 
-If the value does not exist, `toml::find` throws an error with the location of
-the table.
+If the value does not exist, `toml::find` throws `std::out_of_range` with the
+location of the table.
 
 ```console
 terminate called after throwing an instance of 'std::out_of_range'
@@ -285,11 +320,6 @@ terminate called after throwing an instance of 'std::out_of_range'
  6 | [tab]
    | ~~~~~ in this table
 ```
-
-**Note**: It is recommended to find a table as `toml::value` because it has much information
-compared to `toml::table`, which is an alias of
-`std::unordered_map<std::string, toml::value>`. Since `toml::table` does not have
-any information about toml file, such as where the table was defined in the file.
 
 ----
 
@@ -476,6 +506,40 @@ it throws `std::out_of_range`.
 Note that, although `std::string` has `at()` member function, `toml::value::at`
 throws if the contained type is a string. Because `std::string` does not
 contain `toml::value`.
+
+### `operator[]`
+
+You can also access to the element of a table and an array by
+`toml::basic_value::operator[]`.
+
+```cpp
+const toml::value v{1,2,3,4,5};
+std::cout << v[2].as_integer() << std::endl; // 3
+
+const toml::value v{{"foo", 42}, {"bar", 3.14}};
+std::cout << v["foo"].as_integer() << std::endl; // 42
+```
+
+When you access to a `toml::value` that is not initialized yet via
+`operator[](const std::string&)`, the `toml::value` will be a table,
+just like the `std::map`.
+
+```cpp
+toml::value v; // not initialized as a table.
+v["foo"] = 42; // OK. `v` will be a table.
+```
+
+Contrary, if you access to a `toml::value` that contains an array via `operator[]`,
+it does not check anything. It converts `toml::value` without type check and then
+access to the n-th element without boundary check, just like the `std::vector::operator[]`.
+
+```cpp
+toml::value v; // not initialized as an array
+v[2] = 42;     // error! UB
+```
+
+Please make sure that the `toml::value` has an array inside when you access to
+its element via `operator[]`.
 
 ## Checking value type
 
@@ -699,6 +763,7 @@ date information, but it can be converted to `std::chrono::duration` that
 represents a duration from the beginning of the day, `00:00:00.000`.
 
 ```toml
+# sample.toml
 date = 2018-12-23
 time = 12:30:00
 l_dt = 2018-12-23T12:30:00
@@ -715,8 +780,12 @@ const auto o_dt = toml::get<std::chrono::system_clock::time_point>(data.at("o_dt
 const auto time = toml::get<std::chrono::minutes>(data.at("time")); // 12 * 60 + 30 min
 ```
 
-toml11 defines its own datetime classes.
-You can see the definitions in [toml/datetime.hpp](toml/datetime.hpp).
+`local_date` and `local_datetime` are assumed to be in the local timezone when
+they are converted into `time_point`. On the other hand, `offset_datetime` only
+uses the offset part of the data and it does not take local timezone into account.
+
+To contain datetime data, toml11 defines its own datetime types.
+For more detail, you can see the definitions in [toml/datetime.hpp](toml/datetime.hpp).
 
 ## Getting with a fallback
 
@@ -829,14 +898,25 @@ toml::value v(toml::local_time(std::chrono::hours(10)));
 ```
 
 You can construct an array object not only from `initializer_list`, but also
-from STL containers.
+from STL containers. In that case, the element type must be convertible to
+`toml::value`.
 
 ```cpp
 std::vector<int> vec{1,2,3,4,5};
-toml::value v = vec;
+toml::value v(vec);
 ```
 
-All the elements of `initializer_list` should be convertible into `toml::value`.
+When you construct an array value, all the elements of `initializer_list`
+must be convertible into `toml::value`.
+
+If a `toml::value` has an array, you can `push_back` an element in it.
+
+```cpp
+toml::value v{1,2,3,4,5};
+v.push_back(6);
+```
+
+`emplace_back` also works.
 
 ## Preserving comments
 
@@ -1053,7 +1133,7 @@ const auto data = toml::parse("example.toml");
 const foo f = toml::find<ext::foo>(data, "foo");
 ```
 
-There are 2 ways to use `toml::get` with the types that you defined.
+There are 3 ways to use `toml::get` with the types that you defined.
 
 The first one is to implement `from_toml(const toml::value&)` member function.
 
@@ -1080,7 +1160,31 @@ struct foo
 In this way, because `toml::get` first constructs `foo` without arguments,
 the type should be default-constructible.
 
-The second is to implement specialization of `toml::from` for your type.
+The second is to implement `constructor(const toml::value&)`.
+
+```cpp
+namespace ext
+{
+struct foo
+{
+    explicit foo(const toml::value& v)
+        : a(toml::find<int>(v, "a")), b(toml::find<double>(v, "b")),
+          c(toml::find<std::string>(v, "c"))
+    {}
+
+    int         a;
+    double      b;
+    std::string c;
+};
+} // ext
+```
+
+Note that implicit default constructor declaration will be suppressed
+when a constructor is defined. If you want to use the struct (here, `foo`)
+in a container (e.g. `std::vector<foo>`), you may need to define default
+constructor explicitly.
+
+The third is to implement specialization of `toml::from` for your type.
 
 ```cpp
 namespace ext
@@ -1261,6 +1365,27 @@ you will get an error message like this.
    |       ~~ maximum number here
 ```
 
+You can print hints at the end of the message.
+
+```cpp
+std::vector<std::string> hints;
+hints.push_back("positive number means n >= 0.");
+hints.push_back("negative number is not positive.");
+std::cerr << toml::format_error("[error] value should be positive",
+                                data.at("num"), "positive number required", hints)
+          << std::endl;
+```
+
+```console
+[error] value should be positive
+ --> example.toml
+ 2 | num = 42
+   |       ~~ positive number required
+   |
+Hint: positive number means n >= 0.
+Hint: negative number is not positive.
+```
+
 ## Obtaining location information
 
 You can also format error messages in your own way by using `source_location`.
@@ -1314,6 +1439,63 @@ struct exception : public std::exception
 ```
 
 It represents where the error occurs.
+
+## Colorize Error Messages
+
+By defining `TOML11_COLORIZE_ERROR_MESSAGE`, the error messages from
+`toml::parse` and `toml::find|get` will be colorized. By default, this feature
+is turned off.
+
+With the following toml file taken from `toml-lang/toml/tests/hard_example.toml`,
+
+```toml
+[error]
+array = [
+         "This might most likely happen in multiline arrays",
+         Like here,
+         "or here,
+         and here"
+        ]     End of array comment, forgot the #
+```
+
+the error message would be like this.
+
+![error-message-1](https://github.com/ToruNiina/toml11/blob/misc/misc/toml11-err-msg-1.png)
+
+With the following,
+
+```toml
+[error]
+# array = [
+#          "This might most likely happen in multiline arrays",
+#          Like here,
+#          "or here,
+#          and here"
+#         ]     End of array comment, forgot the #
+number = 3.14  pi <--again forgot the #
+```
+
+the error message would be like this.
+
+![error-message-2](https://github.com/ToruNiina/toml11/blob/misc/misc/toml11-err-msg-2.png)
+
+The message would be messy when it is written to a file, not a terminal because
+it uses [ANSI escape code](https://en.wikipedia.org/wiki/ANSI_escape_code).
+
+Without `TOML11_COLORIZE_ERROR_MESSAGE`, you can still colorize user-defined
+error message by passing `true` to the `toml::format_error` function.
+If you define `TOML11_COLORIZE_ERROR_MESSAGE`, the value is `true` by default.
+If not, the defalut value would be `false`.
+
+```cpp
+std::cerr << toml::format_error("[error] value should be positive",
+                                data.at("num"), "positive number required",
+                                hints, /*colorize = */ true) << std::endl;
+```
+
+Note: It colorize `[error]` in red. That means that it detects `[error]` prefix
+at the front of the error message. If there is no `[error]` prefix,
+`format_error` adds it to the error message.
 
 ## Serializing TOML data
 
@@ -1446,8 +1628,6 @@ This feature is introduced to make it easy to write a custom serializer.
 `Datetime` variants are `struct` that are defined in this library.
 Because `std::chrono::system_clock::time_point` is a __time point__,
 not capable of representing a Local Time independent from a specific day.
-
-It is recommended to get `datetime`s as `std::chrono` classes through `toml::get`.
 
 ## Unreleased TOML features
 
@@ -1598,11 +1778,20 @@ I appreciate the help of the contributors who introduced the great feature to th
   - Added installation script to CMake
 - J.C. Moyer (@jcmoyer)
   - Fixed an example code in the documentation
+- Jt Freeman (@blockparty-sh)
+  - Fixed feature test macro around `localtime_s`
+  - Suppress warnings in Debug mode
+- OGAWA Kenichi (@kenichiice)
+  - Suppress warnings on intel compiler
+- Jordan Williams (@jwillikers)
+  - Fixed clang range-loop-analysis warnings
+  - Fixed feature test macro to suppress -Wundef
+  - Use cache variables in CMakeLists.txt
 
 ## Licensing terms
 
 This product is licensed under the terms of the [MIT License](LICENSE).
 
-- Copyright (c) 2017-2019 Toru Niina
+- Copyright (c) 2017-2020 Toru Niina
 
 All rights reserved.

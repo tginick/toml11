@@ -4,21 +4,21 @@ enable_testing()
 project(toml11)
 
 set(toml11_VERSION_MAYOR  3)
-set(toml11_VERSION_MINOR  0)
+set(toml11_VERSION_MINOR  3)
 set(toml11_VERSION_PATCH  1)
 set(toml11_VERSION
   "${toml11_VERSION_MAYOR}.${toml11_VERSION_MINOR}.${toml11_VERSION_PATCH}"
 )
 
 option(toml11_BUILD_TEST "Build toml tests" ON)
+option(toml11_TEST_WITH_ASAN  "use LLVM address sanitizer" OFF)
+option(toml11_TEST_WITH_UBSAN "use LLVM undefined behavior sanitizer" OFF)
 
 include(CheckCXXCompilerFlag)
 if("${CMAKE_VERSION}" VERSION_GREATER 3.1)
-    set(CMAKE_CXX_EXTENSIONS OFF)
-    if(NOT DEFINED CMAKE_CXX_STANDARD)
-        set(CMAKE_CXX_STANDARD 11)
-    endif()
-    set(CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_STANDARD 11 CACHE STRING "The C++ standard whose features are requested to build all targets.")
+    set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "Boolean describing whether the value of CXX_STANDARD is a requirement.")
+    set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "Boolean specifying whether compiler specific extensions are requested.")
 else()
     # Manually check for C++11 compiler flag.
     CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)

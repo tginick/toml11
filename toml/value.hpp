@@ -20,11 +20,24 @@ namespace detail
 {
 
 // to show error messages. not recommended for users.
-template<typename C, template<typename ...> class T, template<typename ...> class A>
-region_base const& get_region(const basic_value<C, T, A>&);
-template<typename Region,
-         typename C, template<typename ...> class T, template<typename ...> class A>
-void change_region(basic_value<C, T, A>&, Region&&);
+template<typename Value>
+inline region_base const& get_region(const Value& v)
+{
+    return *(v.region_info_);
+}
+
+template<typename Value, typename Region>
+void change_region(Value& v, Region&& reg)
+{
+    using region_type = typename std::remove_reference<
+        typename std::remove_cv<Region>::type
+        >::type;
+
+    std::shared_ptr<region_base> new_reg =
+        std::make_shared<region_type>(std::forward<region_type>(reg));
+    v.region_info_ = new_reg;
+    return;
+}
 
 template<value_t Expected,
          typename C, template<typename ...> class T, template<typename ...> class A>
@@ -32,7 +45,7 @@ template<value_t Expected,
 throw_bad_cast(value_t actual, const ::toml::basic_value<C, T, A>& v)
 {
     throw type_error(detail::format_underline(concat_to_string(
-        "[error] toml::value bad_cast to ", Expected), {
+        "toml::value: bad_cast to ", Expected), {
             {std::addressof(get_region(v)),
              concat_to_string("the actual type is ", actual)}
         }), v.location());
@@ -529,14 +542,6 @@ class basic_value
         assigner(this->boolean_, b);
         return *this;
     }
-    template<typename Container>
-    basic_value(boolean b, detail::region<Container> reg)
-        : type_(value_t::boolean),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
-    {
-        assigner(this->boolean_, b);
-    }
     basic_value(boolean b, std::vector<std::string> comments)
         : type_(value_t::boolean),
           region_info_(std::make_shared<region_base>(region_base{})),
@@ -553,19 +558,6 @@ class basic_value
     basic_value(T i)
         : type_(value_t::integer),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->integer_, static_cast<integer>(i));
-    }
-
-    template<typename T, typename Container, typename std::enable_if<
-        detail::conjunction<
-            std::is_integral<T>,
-            detail::negation<std::is_same<T, boolean>>
-        >::value, std::nullptr_t>::type = nullptr>
-    basic_value(T i, detail::region<Container> reg)
-        : type_(value_t::integer),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->integer_, static_cast<integer>(i));
     }
@@ -604,15 +596,6 @@ class basic_value
         assigner(this->floating_, static_cast<floating>(f));
     }
 
-    template<typename T, typename Container, typename std::enable_if<
-        std::is_floating_point<T>::value, std::nullptr_t>::type = nullptr>
-    basic_value(T f, detail::region<Container> reg)
-        : type_(value_t::floating),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
-    {
-        assigner(this->floating_, static_cast<floating>(f));
-    }
 
     template<typename T, typename std::enable_if<
         std::is_floating_point<T>::value, std::nullptr_t>::type = nullptr>
@@ -640,14 +623,6 @@ class basic_value
     basic_value(toml::string s)
         : type_(value_t::string),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->string_, std::move(s));
-    }
-    template<typename Container>
-    basic_value(toml::string s, detail::region<Container> reg)
-        : type_(value_t::string),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->string_, std::move(s));
     }
@@ -782,14 +757,6 @@ class basic_value
     {
         assigner(this->local_date_, ld);
     }
-    template<typename Container>
-    basic_value(const local_date& ld, detail::region<Container> reg)
-        : type_(value_t::local_date),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
-    {
-        assigner(this->local_date_, ld);
-    }
     basic_value& operator=(const local_date& ld)
     {
         this->cleanup();
@@ -811,14 +778,6 @@ class basic_value
     basic_value(const local_time& lt)
         : type_(value_t::local_time),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->local_time_, lt);
-    }
-    template<typename Container>
-    basic_value(const local_time& lt, detail::region<Container> reg)
-        : type_(value_t::local_time),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->local_time_, lt);
     }
@@ -872,14 +831,6 @@ class basic_value
     {
         assigner(this->local_datetime_, ldt);
     }
-    template<typename Container>
-    basic_value(const local_datetime& ldt, detail::region<Container> reg)
-        : type_(value_t::local_datetime),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
-    {
-        assigner(this->local_datetime_, ldt);
-    }
     basic_value(const local_datetime& ldt, std::vector<std::string> comments)
         : type_(value_t::local_datetime),
           region_info_(std::make_shared<region_base>(region_base{})),
@@ -901,14 +852,6 @@ class basic_value
     basic_value(const offset_datetime& odt)
         : type_(value_t::offset_datetime),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->offset_datetime_, odt);
-    }
-    template<typename Container>
-    basic_value(const offset_datetime& odt, detail::region<Container> reg)
-        : type_(value_t::offset_datetime),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->offset_datetime_, odt);
     }
@@ -955,14 +898,6 @@ class basic_value
     basic_value(const array_type& ary)
         : type_(value_t::array),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->array_, ary);
-    }
-    template<typename Container>
-    basic_value(const array_type& ary, detail::region<Container> reg)
-        : type_(value_t::array),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->array_, ary);
     }
@@ -1076,14 +1011,6 @@ class basic_value
     basic_value(const table_type& tab)
         : type_(value_t::table),
           region_info_(std::make_shared<region_base>(region_base{}))
-    {
-        assigner(this->table_, tab);
-    }
-    template<typename Container>
-    basic_value(const table_type& tab, detail::region<Container> reg)
-        : type_(value_t::table),
-          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
-          comments_(region_info_->comments())
     {
         assigner(this->table_, tab);
     }
@@ -1216,6 +1143,93 @@ class basic_value
     }
 
     // for internal use ------------------------------------------------------
+    //
+    // Those constructors take detail::region that contains parse result.
+
+    template<typename Container>
+    basic_value(boolean b, detail::region<Container> reg)
+        : type_(value_t::boolean),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->boolean_, b);
+    }
+    template<typename T, typename Container, typename std::enable_if<
+        detail::conjunction<
+            std::is_integral<T>, detail::negation<std::is_same<T, boolean>>
+        >::value, std::nullptr_t>::type = nullptr>
+    basic_value(T i, detail::region<Container> reg)
+        : type_(value_t::integer),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->integer_, static_cast<integer>(i));
+    }
+    template<typename T, typename Container, typename std::enable_if<
+        std::is_floating_point<T>::value, std::nullptr_t>::type = nullptr>
+    basic_value(T f, detail::region<Container> reg)
+        : type_(value_t::floating),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->floating_, static_cast<floating>(f));
+    }
+    template<typename Container>
+    basic_value(toml::string s, detail::region<Container> reg)
+        : type_(value_t::string),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->string_, std::move(s));
+    }
+    template<typename Container>
+    basic_value(const local_date& ld, detail::region<Container> reg)
+        : type_(value_t::local_date),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->local_date_, ld);
+    }
+    template<typename Container>
+    basic_value(const local_time& lt, detail::region<Container> reg)
+        : type_(value_t::local_time),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->local_time_, lt);
+    }
+    template<typename Container>
+    basic_value(const local_datetime& ldt, detail::region<Container> reg)
+        : type_(value_t::local_datetime),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->local_datetime_, ldt);
+    }
+    template<typename Container>
+    basic_value(const offset_datetime& odt, detail::region<Container> reg)
+        : type_(value_t::offset_datetime),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->offset_datetime_, odt);
+    }
+    template<typename Container>
+    basic_value(const array_type& ary, detail::region<Container> reg)
+        : type_(value_t::array),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->array_, ary);
+    }
+    template<typename Container>
+    basic_value(const table_type& tab, detail::region<Container> reg)
+        : type_(value_t::table),
+          region_info_(std::make_shared<detail::region<Container>>(std::move(reg))),
+          comments_(region_info_->comments())
+    {
+        assigner(this->table_, tab);
+    }
 
     template<typename T, typename Container, typename std::enable_if<
         detail::is_exact_toml_type<T, value_type>::value,
@@ -1247,7 +1261,7 @@ class basic_value
     bool is_array()           const noexcept {return this->is(value_t::array          );}
     bool is_table()           const noexcept {return this->is(value_t::table          );}
 
-    value_t type() const {return type_;}
+    value_t type() const noexcept {return type_;}
 
     template<value_t T>
     typename detail::enum_to_type<T, value_type>::type&       cast() &
@@ -1579,6 +1593,14 @@ class basic_value
     {
         return this->as_table().at(k);
     }
+    value_type&       operator[](const key& k)
+    {
+        if(this->is_uninitialized())
+        {
+            *this = table_type{};
+        }
+        return this->as_table()[k];
+    }
 
     value_type&       at(const std::size_t idx)
     {
@@ -1587,6 +1609,110 @@ class basic_value
     value_type const& at(const std::size_t idx) const
     {
         return this->as_array().at(idx);
+    }
+
+    value_type&       operator[](const std::size_t idx) noexcept
+    {
+        return this->as_array(std::nothrow)[idx];
+    }
+    value_type const& operator[](const std::size_t idx) const noexcept
+    {
+        return this->as_array(std::nothrow)[idx];
+    }
+
+    void push_back(const value_type& x)
+    {
+        if(this->type_ != value_t::array)
+        {
+            throw type_error(detail::format_underline(
+                "toml::value::push_back(value): bad_cast to array type", {
+                    {this->region_info_.get(),
+                     concat_to_string("the actual type is ", this->type_)}
+                }), this->location());
+        }
+        this->as_array(std::nothrow).push_back(x);
+        return;
+    }
+    void push_back(value_type&& x)
+    {
+        if(this->type_ != value_t::array)
+        {
+            throw type_error(detail::format_underline(
+                "toml::value::push_back(value): bad_cast to array type", {
+                    {this->region_info_.get(),
+                     concat_to_string("the actual type is ", this->type_)}
+                }), this->location());
+        }
+        this->as_array(std::nothrow).push_back(std::move(x));
+        return;
+    }
+
+    template<typename ... Ts>
+    value_type& emplace_back(Ts&& ... args)
+    {
+        if(this->type_ != value_t::array)
+        {
+            throw type_error(detail::format_underline(
+                "toml::value::emplace_back(value): bad_cast to array type", {
+                    {this->region_info_.get(),
+                     concat_to_string("the actual type is ", this->type_)}
+                }), this->location());
+        }
+        this->as_array(std::nothrow).emplace_back(std::forward<Ts>(args) ...);
+        return this->as_array(std::nothrow).back();
+    }
+
+    std::size_t size() const
+    {
+        switch(this->type_)
+        {
+            case value_t::array:
+            {
+                return this->as_array().size();
+            }
+            case value_t::table:
+            {
+                return this->as_table().size();
+            }
+            case value_t::string:
+            {
+                return this->as_string().str.size();
+            }
+            default:
+            {
+                throw type_error(detail::format_underline(
+                    "toml::value::size(): bad_cast to container types", {
+                        {this->region_info_.get(),
+                         concat_to_string("the actual type is ", this->type_)}
+                    }), this->location());
+            }
+        }
+    }
+
+    std::size_t count(const key_type& k) const
+    {
+        if(this->type_ != value_t::table)
+        {
+            throw type_error(detail::format_underline(
+                "toml::value::count(key): bad_cast to table type", {
+                    {this->region_info_.get(),
+                     concat_to_string("the actual type is ", this->type_)}
+                }), this->location());
+        }
+        return this->as_table().count(k);
+    }
+
+    bool contains(const key_type& k) const
+    {
+        if(this->type_ != value_t::table)
+        {
+            throw type_error(detail::format_underline(
+                "toml::value::contains(key): bad_cast to table type", {
+                    {this->region_info_.get(),
+                     concat_to_string("the actual type is ", this->type_)}
+                }), this->location());
+        }
+        return (this->as_table().count(k) != 0);
     }
 
     source_location location() const
@@ -1611,13 +1737,11 @@ class basic_value
     }
 
     // for error messages
-    template<typename C,
-             template<typename ...> class T, template<typename ...> class A>
-    friend region_base const& detail::get_region(const basic_value<C, T, A>&);
+    template<typename Value>
+    friend region_base const& detail::get_region(const Value& v);
 
-    template<typename Region, typename C,
-             template<typename ...> class T, template<typename ...> class A>
-    friend void detail::change_region(basic_value<C, T, A>&, Region&&);
+    template<typename Value, typename Region>
+    friend void detail::change_region(Value& v, Region&& reg);
 
   private:
 
@@ -1646,30 +1770,6 @@ class basic_value
 using value = basic_value<discard_comments, std::unordered_map, std::vector>;
 using array = typename value::array_type;
 using table = typename value::table_type;
-
-namespace detail
-{
-template<typename C,
-         template<typename ...> class T, template<typename ...> class A>
-inline region_base const& get_region(const basic_value<C, T, A>& v)
-{
-    return *(v.region_info_);
-}
-
-template<typename Region, typename C,
-         template<typename ...> class T, template<typename ...> class A>
-void change_region(basic_value<C, T, A>& v, Region&& reg)
-{
-    using region_type = typename std::remove_reference<
-        typename std::remove_cv<Region>::type
-        >::type;
-
-    std::shared_ptr<region_base> new_reg =
-        std::make_shared<region_type>(std::forward<region_type>(reg));
-    v.region_info_ = new_reg;
-    return;
-}
-}// detail
 
 template<typename C, template<typename ...> class T, template<typename ...> class A>
 inline bool
@@ -1843,25 +1943,27 @@ operator>=(const basic_value<C, T, A>& lhs, const basic_value<C, T, A>& rhs)
 template<typename C, template<typename ...> class T, template<typename ...> class A>
 inline std::string format_error(const std::string& err_msg,
         const basic_value<C, T, A>& v, const std::string& comment,
-        std::vector<std::string> hints = {})
+        std::vector<std::string> hints = {},
+        const bool colorize = TOML11_ERROR_MESSAGE_COLORIZED)
 {
     return detail::format_underline(err_msg,
         std::vector<std::pair<detail::region_base const*, std::string>>{
             {std::addressof(detail::get_region(v)), comment}
-        }, std::move(hints));
+        }, std::move(hints), colorize);
 }
 
 template<typename C, template<typename ...> class T, template<typename ...> class A>
 inline std::string format_error(const std::string& err_msg,
         const toml::basic_value<C, T, A>& v1, const std::string& comment1,
         const toml::basic_value<C, T, A>& v2, const std::string& comment2,
-        std::vector<std::string> hints = {})
+        std::vector<std::string> hints = {},
+        const bool colorize = TOML11_ERROR_MESSAGE_COLORIZED)
 {
     return detail::format_underline(err_msg,
         std::vector<std::pair<detail::region_base const*, std::string>>{
             {std::addressof(detail::get_region(v1)), comment1},
             {std::addressof(detail::get_region(v2)), comment2}
-        }, std::move(hints));
+        }, std::move(hints), colorize);
 }
 
 template<typename C, template<typename ...> class T, template<typename ...> class A>
@@ -1869,14 +1971,15 @@ inline std::string format_error(const std::string& err_msg,
         const toml::basic_value<C, T, A>& v1, const std::string& comment1,
         const toml::basic_value<C, T, A>& v2, const std::string& comment2,
         const toml::basic_value<C, T, A>& v3, const std::string& comment3,
-        std::vector<std::string> hints = {})
+        std::vector<std::string> hints = {},
+        const bool colorize = TOML11_ERROR_MESSAGE_COLORIZED)
 {
     return detail::format_underline(err_msg,
         std::vector<std::pair<detail::region_base const*, std::string>>{
             {std::addressof(detail::get_region(v1)), comment1},
             {std::addressof(detail::get_region(v2)), comment2},
             {std::addressof(detail::get_region(v3)), comment3}
-        }, std::move(hints));
+        }, std::move(hints), colorize);
 }
 
 template<typename Visitor, typename C,

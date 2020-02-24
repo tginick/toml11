@@ -119,12 +119,17 @@ struct serializer
             return token; // there is no exponent part. just return it.
         }
 #ifdef TOML11_USE_UNRELEASED_TOML_FEATURES
-        // Although currently it is not released yet, TOML will allow
-        // zero-prefix in an exponent part such as 1.234e+01.
-        // The following code removes the zero prefixes.
-        // If the feature is activated, the following codes can be skipped.
+        // Although currently it is not released yet as a tagged version,
+        // TOML will allow zero-prefix in an exponent part, such as `1.234e+01`.
+        // ```toml
+        // num1 = 1.234e+1  # OK in TOML v0.5.0
+        // num2 = 1.234e+01 # error in TOML v0.5.0 but will be allowed soon
+        // ```
+        // To avoid `e+01`, the following `else` section removes the zero
+        // prefixes in the exponent part.
+        // If the feature is activated, it can be skipped.
         return token;
-#endif
+#else
         // zero-prefix in an exponent is NOT allowed in TOML v0.5.0.
         // remove it if it exists.
         bool        sign_exists = false;
@@ -143,17 +148,29 @@ struct serializer
                         zero_prefix);
         }
         return token;
+#endif
     }
     std::string operator()(const string_type& s) const
     {
         if(s.kind == string_t::basic)
         {
-            if(std::find(s.str.cbegin(), s.str.cend(), '\n') != s.str.cend())
+            if(std::find(s.str.cbegin(), s.str.cend(), '\n') != s.str.cend() ||
+               std::find(s.str.cbegin(), s.str.cend(), '\"') != s.str.cend())
             {
-                // if linefeed is contained, make it multiline-string.
-                const std::string open("\"\"\"\n");
-                const std::string close("\\\n\"\"\"");
-                return open + this->escape_ml_basic_string(s.str) + close;
+                // if linefeed or double-quote is contained,
+                // make it multiline basic string.
+                const auto escaped = this->escape_ml_basic_string(s.str);
+                std::string open("\"\"\"");
+                std::string close("\"\"\"");
+                if(escaped.find('\n') != std::string::npos ||
+                   this->width_ < escaped.size() + 6)
+                {
+                    // if the string body contains newline or is enough long,
+                    // add newlines after and before delimiters.
+                    open += "\n";
+                    close = std::string("\\\n") + close;
+                }
+                return open + escaped + close;
             }
 
             // no linefeed. try to make it oneline-string.
@@ -194,7 +211,11 @@ struct serializer
             if(std::find(s.str.cbegin(), s.str.cend(), '\n') != s.str.cend() ||
                std::find(s.str.cbegin(), s.str.cend(), '\'') != s.str.cend() )
             {
-                const std::string open("'''\n");
+                std::string open("'''");
+                if(this->width_ + 6 < s.str.size())
+                {
+                    open += '\n'; // the first newline is ignored by TOML spec
+                }
                 const std::string close("'''");
                 return open + s.str + close;
             }
@@ -489,7 +510,9 @@ struct serializer
             switch(*i)
             {
                 case '\\': {retval += "\\\\"; break;}
-                case '\"': {retval += "\\\""; break;}
+                // One or two consecutive "s are allowed.
+                // Later we will check there are no three consecutive "s.
+                //   case '\"': {retval += "\\\""; break;}
                 case '\b': {retval += "\\b";  break;}
                 case '\t': {retval += "\\t";  break;}
                 case '\f': {retval += "\\f";  break;}
@@ -509,6 +532,23 @@ struct serializer
                 }
                 default: {retval += *i; break;}
             }
+        }
+        // Only 1 or 2 consecutive `"`s are allowed in multiline basic string.
+        // 3 consecutive `"`s are considered as a closing delimiter.
+        // We need to check if there are 3 or more consecutive `"`s and insert
+        // backslash to break them down into several short `"`s like the `str6`
+        // in the following example.
+        // ```toml
+        // str4 = """Here are two quotation marks: "". Simple enough."""
+        // # str5 = """Here are three quotation marks: """."""  # INVALID
+        // str5 = """Here are three quotation marks: ""\"."""
+        // str6 = """Here are fifteen quotation marks: ""\"""\"""\"""\"""\"."""
+        // ```
+        auto found_3_quotes = retval.find("\"\"\"");
+        while(found_3_quotes != std::string::npos)
+        {
+            retval.replace(found_3_quotes, 3, "\"\"\\\"");
+            found_3_quotes = retval.find("\"\"\"");
         }
         return retval;
     }
@@ -579,7 +619,7 @@ struct serializer
 
         // print non-table stuff first. because after printing [foo.bar], the
         // remaining non-table values will be assigned into [foo.bar], not [foo]
-        for(const auto kv : v)
+        for(const auto& kv : v)
         {
             if(kv.second.is_table() || is_array_of_tables(kv.second))
             {

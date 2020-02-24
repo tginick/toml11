@@ -20,11 +20,19 @@
 namespace toml
 {
 
+#if __cplusplus >= 201402L
+
+using std::make_unique;
+
+#else
+
 template<typename T, typename ... Ts>
 inline std::unique_ptr<T> make_unique(Ts&& ... args)
 {
     return std::unique_ptr<T>(new T(std::forward<Ts>(args)...));
 }
+
+#endif // __cplusplus >= 2014
 
 namespace detail
 {
@@ -76,10 +84,10 @@ std::string concat_to_string(Ts&& ... args)
     return detail::concat_to_string_impl(oss, std::forward<Ts>(args) ...);
 }
 
-template<typename T, typename U>
-T from_string(const std::string& str, U&& opt)
+template<typename T>
+T from_string(const std::string& str, T opt)
 {
-    T v(static_cast<T>(std::forward<U>(opt)));
+    T v(opt);
     std::istringstream iss(str);
     iss >> v;
     return v;
